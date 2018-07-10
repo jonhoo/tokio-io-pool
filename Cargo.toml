@@ -1,0 +1,10 @@
+[package]
+name = "tokio-io-pool"
+version = "0.1.0"
+authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+
+[dependencies]
+tokio = "0.1"
+futures = "0.1"
+rand = "0.5"
+num_cpus = "1.8"
