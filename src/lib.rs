@@ -268,6 +268,7 @@ impl Runtime {
     ///
     /// This produces a future that accepts futures from a `Stream` and spawns them all onto the
     /// pool round-robin.
+    #[must_use]
     pub fn spawn_all<S>(
         &self,
         stream: S,
