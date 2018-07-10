@@ -13,11 +13,11 @@
 //! may produce through `tokio::spawn`, remain under the control of that same thread.
 
 #![deny(missing_docs)]
+#![deny(unused_extern_crates)]
 
 #[macro_use]
 extern crate futures;
 extern crate num_cpus;
-extern crate rand;
 extern crate tokio;
 
 use futures::sync::oneshot;
