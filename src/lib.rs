@@ -13,6 +13,8 @@
 //! may produce through `tokio::spawn`, remain under the control of that same thread.
 
 #![deny(missing_docs)]
+#![deny(missing_debug_implementations)]
+#![deny(missing_copy_implementations)]
 #![deny(unused_extern_crates)]
 
 #[macro_use]
@@ -22,7 +24,7 @@ extern crate tokio;
 
 use futures::sync::oneshot;
 use std::sync::{atomic, mpsc, Arc};
-use std::{io, thread};
+use std::{fmt, io, thread};
 use tokio::executor::SpawnError;
 use tokio::prelude::*;
 use tokio::runtime::current_thread;
@@ -39,6 +41,15 @@ pub struct Builder {
     name_prefix: Option<String>,
     after_start: Option<Arc<Fn() + Send + Sync>>,
     before_stop: Option<Arc<Fn() + Send + Sync>>,
+}
+
+impl fmt::Debug for Builder {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Builder")
+            .field("nworkers", &self.nworkers)
+            .field("name_prefix", &self.name_prefix)
+            .finish()
+    }
 }
 
 impl Default for Builder {
@@ -160,6 +171,15 @@ pub struct Handle {
     rri: Arc<atomic::AtomicUsize>,
 }
 
+impl fmt::Debug for Handle {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Handle")
+            .field("nworkers", &self.workers.len())
+            .field("next", &self.rri.load(atomic::Ordering::SeqCst))
+            .finish()
+    }
+}
+
 impl Handle {
     /// Spawn a future onto a runtime in the pool.
     ///
@@ -203,6 +223,14 @@ pub struct Runtime {
     handle: Handle,
     threads: Vec<(oneshot::Sender<bool>, thread::JoinHandle<()>)>,
     force_exit: bool,
+}
+
+impl fmt::Debug for Runtime {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Runtime")
+            .field("nworkers", &self.threads.len())
+            .finish()
+    }
 }
 
 impl Runtime {
@@ -275,6 +303,7 @@ impl Drop for Runtime {
 
 /// An error that occurred as a result of spawning futures from a stream given to
 /// [`Runtime::spawn_all`].
+#[derive(Debug)]
 pub enum StreamSpawnError<SE> {
     /// An error occurred while spawning a future yielded by the stream onto the pool.
     Spawn(SpawnError),
@@ -291,6 +320,17 @@ impl<SE> From<SE> for StreamSpawnError<SE> {
 struct Spawner<S> {
     handle: Handle,
     stream: S,
+}
+
+impl<S> fmt::Debug for Spawner<S>
+where
+    S: fmt::Debug,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Spawner")
+            .field("stream", &self.stream)
+            .finish()
+    }
 }
 
 impl<S> Future for Spawner<S>
