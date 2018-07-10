@@ -358,3 +358,65 @@ where
         Ok(Async::Ready(()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        use futures::future::lazy;
+        use futures::sync::oneshot;
+
+        let (tx, rx) = oneshot::channel();
+
+        let rt = Runtime::new();
+        rt.spawn(lazy(move || {
+            tx.send(()).unwrap();
+            Ok(())
+        })).unwrap();
+        assert_eq!(rx.wait().unwrap(), ());
+        rt.shutdown_on_idle();
+    }
+
+    #[test]
+    fn spawn_all() {
+        let addr = "127.0.0.1:0".parse().unwrap();
+        let listener = tokio::net::TcpListener::bind(&addr).expect("unable to bind TCP listener");
+        let addr = listener.local_addr().unwrap();
+
+        let rt = Builder::default().pool_size(1).build().unwrap();
+        let server = listener
+            .incoming()
+            .map_err(|e| unreachable!("{:?}", e))
+            .map(|sock| {
+                let (reader, writer) = sock.split();
+                let bytes_copied = tokio::io::copy(reader, writer);
+                bytes_copied
+                    .map(|_| ())
+                    .map_err(|err| unreachable!("{:?}", err))
+            });
+
+        // spawn all connections onto the pool
+        let spawner = rt.spawn_all(server);
+
+        // spawn the spawner onto the pool too
+        // (a "real" server might wait for it instead)
+        rt.spawn(spawner.map_err(|e| unreachable!("{:?}", e)))
+            .unwrap();
+
+        let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
+        client.write_all(b"hello world").unwrap();
+        client.shutdown(::std::net::Shutdown::Write).unwrap();
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"hello world");
+
+        let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
+        client.write_all(b"bye world").unwrap();
+        client.shutdown(::std::net::Shutdown::Write).unwrap();
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"bye world");
+    }
+}
