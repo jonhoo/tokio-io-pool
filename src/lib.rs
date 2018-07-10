@@ -280,7 +280,16 @@ impl Runtime {
         self.handle.spawn_all(stream)
     }
 
-    /// Shutdown the pool once all spawned futures have completed.
+    /// Shut down the pool as soon as possible.
+    ///
+    /// Note that once this method has been called, attempts to spawn additional futures onto the
+    /// pool through an outstanding `Handle` may fail. Futures that have not yet resolved will be
+    /// dropped.
+    ///
+    /// The pool will only terminate once any currently-running futures return `NotReady`.
+    pub fn shutdown(self) {}
+
+    /// Shut down the pool once all spawned futures have completed.
     ///
     /// Note that once this method has been called, attempts to spawn additional futures onto the
     /// pool through an outstanding `Handle` may fail.
