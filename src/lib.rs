@@ -11,6 +11,50 @@
 //! an I/O reactor of their own), and spawns futures onto the pool by assigning the future to
 //! threads round-robin. Once a future has been spawned onto a thread, it, and any child futures it
 //! may produce through `tokio::spawn`, remain under the control of that same thread.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! extern crate tokio_io_pool;
+//! extern crate tokio;
+//!
+//! use tokio::prelude::*;
+//! use tokio::io::copy;
+//! use tokio::net::TcpListener;
+//!
+//! fn main() {
+//!     // Bind the server's socket.
+//!     let addr = "127.0.0.1:12345".parse().unwrap();
+//!     let listener = TcpListener::bind(&addr)
+//!         .expect("unable to bind TCP listener");
+//!
+//!     // Pull out a stream of sockets for incoming connections
+//!     let server = listener.incoming()
+//!         .map_err(|e| eprintln!("accept failed = {:?}", e))
+//!         .for_each(|sock| {
+//!             // Split up the reading and writing parts of the
+//!             // socket.
+//!             let (reader, writer) = sock.split();
+//!
+//!             // A future that echos the data and returns how
+//!             // many bytes were copied...
+//!             let bytes_copied = copy(reader, writer);
+//!
+//!             // ... after which we'll print what happened.
+//!             let handle_conn = bytes_copied.map(|amt| {
+//!                 println!("wrote {:?} bytes", amt)
+//!             }).map_err(|err| {
+//!                 eprintln!("IO error {:?}", err)
+//!             });
+//!
+//!             // Spawn the future as a concurrent task.
+//!             tokio::spawn(handle_conn)
+//!         });
+//!
+//!     // Start the Tokio runtime
+//!     tokio_io_pool::run(server);
+//! }
+//! ```
 
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
@@ -21,6 +65,7 @@
 extern crate futures;
 extern crate num_cpus;
 extern crate tokio;
+extern crate tokio_executor;
 
 use futures::sync::oneshot;
 use std::sync::{atomic, mpsc, Arc};
@@ -164,6 +209,52 @@ impl Builder {
     }
 }
 
+/// Execute the given future and spawn any child futures onto a newly created I/O thread pool.
+///
+/// This function is used to bootstrap the execution of a Tokio application. It does the following:
+///
+///  - Start the Tokio I/O pool using a default configuration.
+///  - Configure Tokio to make any future spawned with `tokio::spawn` spawn on the pool.
+///  - Run the given future to completion on the current thread.
+///  - Block the current thread until the pool becomes idle.
+///
+/// Note that the function will not return immediately once future has completed. Instead it waits
+/// for the entire pool to become idle. Note also that the top-level future will be executed with
+/// [`Runtime::block_on`], which calls `Future::wait`, and thus does not provide access to timers,
+/// clocks, or other tokio runtime goodies.
+///
+/// # Examples
+///
+/// ```no_run
+/// # extern crate tokio_io_pool;
+/// # extern crate tokio;
+/// # extern crate futures;
+/// # use futures::{Future, Stream};
+/// # fn process<T>(_: T) -> Box<Future<Item = (), Error = ()> + Send> {
+/// # unimplemented!();
+/// # }
+/// # let addr = "127.0.0.1:8080".parse().unwrap();
+/// use tokio::net::TcpListener;
+///
+/// let listener = TcpListener::bind(&addr).unwrap();
+///
+/// let server = listener.incoming()
+///     .map_err(|e| println!("error = {:?}", e))
+///     .for_each(|socket| {
+///         tokio::spawn(process(socket))
+///     });
+///
+/// tokio_io_pool::run(server);
+/// ```
+pub fn run<F>(future: F)
+where
+    F: Future<Item = (), Error = ()> + Send + 'static,
+{
+    let mut rt = Runtime::new();
+    let _ = rt.block_on(future);
+    rt.shutdown_on_idle();
+}
+
 /// A handle to a [`Runtime`] that allows spawning additional futures from other threads.
 #[derive(Clone)]
 pub struct Handle {
@@ -177,6 +268,15 @@ impl fmt::Debug for Handle {
             .field("nworkers", &self.workers.len())
             .field("next", &self.rri.load(atomic::Ordering::SeqCst))
             .finish()
+    }
+}
+
+impl tokio::executor::Executor for Handle {
+    fn spawn(
+        &mut self,
+        future: Box<Future<Item = (), Error = ()> + 'static + Send>,
+    ) -> Result<(), SpawnError> {
+        Handle::spawn(self, future).map(|_| ())
     }
 }
 
@@ -278,6 +378,25 @@ impl Runtime {
         <S as Stream>::Item: Future<Item = (), Error = ()> + Send + 'static,
     {
         self.handle.spawn_all(stream)
+    }
+
+    /// Run the given future on the current thread, and dispatch any child futures spawned with
+    /// `tokio::spawn` onto the I/O pool.
+    ///
+    /// Note that child futures of futures that are already running on the pool will be executed on
+    /// the same pool thread as their parent. Only the "top-level" calls to `tokio::spawn` are
+    /// scheduled to the thread pool as a whole.
+    ///
+    /// Note that the top-level future is executed using `Future::wait`, and thus does not provide
+    /// access to timers, clocks, or other tokio runtime goodies.
+    pub fn block_on<F, R, E>(&mut self, future: F) -> Result<R, E>
+    where
+        F: Send + 'static + Future<Item = R, Error = E>,
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        let mut enter = tokio_executor::enter().expect("already running in executor context");
+        tokio_executor::with_default(&mut self.handle, &mut enter, |_| future.wait())
     }
 
     /// Shut down the pool as soon as possible.
@@ -404,6 +523,44 @@ mod tests {
         // (a "real" server might wait for it instead)
         rt.spawn(spawner.map_err(|e| unreachable!("{:?}", e)))
             .unwrap();
+
+        let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
+        client.write_all(b"hello world").unwrap();
+        client.shutdown(::std::net::Shutdown::Write).unwrap();
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"hello world");
+
+        let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
+        client.write_all(b"bye world").unwrap();
+        client.shutdown(::std::net::Shutdown::Write).unwrap();
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"bye world");
+    }
+
+    #[test]
+    fn run() {
+        let addr = "127.0.0.1:0".parse().unwrap();
+        let listener = tokio::net::TcpListener::bind(&addr).expect("unable to bind TCP listener");
+        let addr = listener.local_addr().unwrap();
+
+        thread::spawn(move || {
+            let server = listener
+                .incoming()
+                .map_err(|e| unreachable!("{:?}", e))
+                .for_each(|sock| {
+                    let (reader, writer) = sock.split();
+                    let bytes_copied = tokio::io::copy(reader, writer);
+                    tokio::spawn(
+                        bytes_copied
+                            .map(|_| ())
+                            .map_err(|err| unreachable!("{:?}", err)),
+                    )
+                });
+
+            super::run(server);
+        });
 
         let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
         client.write_all(b"hello world").unwrap();

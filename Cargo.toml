@@ -1,6 +1,6 @@
 [package]
 name = "tokio-io-pool"
-version = "0.1.0"
+version = "0.1.1"
 
 description = "Alternative tokio thread pool for I/O-heavy applications"
 readme = "README.md"
@@ -22,3 +22,4 @@ travis-ci = { repository = "jonhoo/tokio-io-pool" }
 tokio = "0.1"
 futures = "0.1"
 num_cpus = "1.8"
+tokio-executor = "0.1.2"
