@@ -1,7 +1,22 @@
 [package]
 name = "tokio-io-pool"
 version = "0.1.0"
+
+description = "Alternative tokio thread pool for I/O-heavy applications"
+readme = "README.md"
+
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+
+homepage = "https://github.com/jonhoo/tokio-io-pool"
+repository = "https://github.com/jonhoo/tokio-io-pool.git"
+
+keywords = ["futures", "tokio", "threadpool", "io"]
+categories = ["asynchronous", "concurrency", "network-programming"]
+
+license = "MIT/Apache-2.0"
+
+[badges]
+travis-ci = { repository = "jonhoo/tokio-io-pool" }
 
 [dependencies]
 tokio = "0.1"
