@@ -12,6 +12,14 @@
 //! threads round-robin. Once a future has been spawned onto a thread, it, and any child futures it
 //! may produce through `tokio::spawn`, remain under the control of that same thread.
 //!
+//! Be aware that this pool does *not* support the
+//! [`blocking`](https://docs.rs/tokio-threadpool/0.1.5/tokio_threadpool/fn.blocking.html) function
+//! since it is [not supported](https://github.com/tokio-rs/tokio/issues/432) by the underlying
+//! `current_thread::Runtime`. Hopefully this will be rectified down the line.
+//!
+//! There is some discussion around trying to merge this pool into `tokio` proper; that effort is
+//! tracked in [tokio-rs/tokio#486](https://github.com/tokio-rs/tokio/issues/486).
+//!
 //! # Examples
 //!
 //! ```no_run
