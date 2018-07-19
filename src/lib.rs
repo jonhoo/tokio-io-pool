@@ -274,7 +274,7 @@ impl fmt::Debug for Handle {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Handle")
             .field("nworkers", &self.workers.len())
-            .field("next", &self.rri.load(atomic::Ordering::SeqCst))
+            .field("next", &self.rri.load(atomic::Ordering::Relaxed))
             .finish()
     }
 }
@@ -297,7 +297,7 @@ impl Handle {
     where
         F: Future<Item = (), Error = ()> + Send + 'static,
     {
-        let worker = self.rri.fetch_add(1, atomic::Ordering::SeqCst) % self.workers.len();
+        let worker = self.rri.fetch_add(1, atomic::Ordering::Relaxed) % self.workers.len();
         self.workers[worker].spawn(future)?;
         Ok(self)
     }
