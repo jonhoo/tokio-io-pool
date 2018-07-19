@@ -323,7 +323,7 @@ impl Handle {
 
 /// An I/O-oriented thread pool for executing futures.
 ///
-/// Each thread in the pool has its own I/O reactor, and futures are spawned onto futures
+/// Each thread in the pool has its own I/O reactor, and futures are spawned onto threads
 /// round-robin. Futures do not (currently) move between threads in the pool once spawned, and any
 /// new futures spawned (using `tokio::spawn`) inside futures are scheduled on the same worker as
 /// the original future.
@@ -352,7 +352,7 @@ impl Runtime {
         Builder::default().build().unwrap()
     }
 
-    /// Return an additional reference to the pool.
+    /// Return a reference to the pool.
     ///
     /// The returned handle reference can be cloned in order to get an owned value of the handle.
     /// This handle can be used to spawn additional futures onto the pool from other threads.
