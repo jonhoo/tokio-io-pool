@@ -584,4 +584,45 @@ mod tests {
         client.read_to_end(&mut bytes).unwrap();
         assert_eq!(&bytes, b"bye world");
     }
+
+    // futures channels can exchange information between different threads
+    #[test]
+    fn interthread_communication() {
+        use futures::sync::oneshot;
+
+        let (tx0, rx0) = oneshot::channel::<u32>();
+        let (tx1, rx1) = oneshot::channel::<u32>();
+
+        let rt = Runtime::new();
+        rt.spawn(future::ok::<(), ()>(tx0.send(42).unwrap())
+        ).unwrap();
+        rt.spawn(rx0.map(|v| tx1.send(v + 1).unwrap())
+                    .map_err(|_| ())
+        ).unwrap();
+        assert_eq!(rx1.wait().unwrap(), 43);
+        rt.shutdown_on_idle();
+    }
+
+    // A Future that isn't Send can't be spawned into the Runtime, but it _can_ be spawned from a
+    // thread onto that same thread
+    #[test]
+    fn spawn_nonsend_futures() {
+        use futures::future::lazy;
+        use futures::sync::oneshot;
+        use std::rc::Rc;
+        use tokio::executor::current_thread;
+
+        let rt = Runtime::new();
+        rt.spawn(lazy(|| {
+            let (tx, rx) = oneshot::channel::<u32>();
+            let x = Rc::new(42u32);  // Note: Rc is not Send
+            current_thread::spawn(lazy(move || {
+                tx.send(*x);
+                Ok(())
+            }));
+            rx.map(|value| assert_eq!(42, value))
+              .map_err(|_| ())
+        })).unwrap();
+        rt.shutdown_on_idle();
+    }
 }
