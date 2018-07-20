@@ -593,7 +593,7 @@ mod tests {
         let (tx0, rx0) = oneshot::channel::<u32>();
         let (tx1, rx1) = oneshot::channel::<u32>();
 
-        let rt = Runtime::new();
+        let rt = Builder::default().pool_size(2).build().unwrap();
         rt.spawn(future::ok::<(), ()>(tx0.send(42).unwrap())
         ).unwrap();
         rt.spawn(rx0.map(|v| tx1.send(v + 1).unwrap())
@@ -617,7 +617,7 @@ mod tests {
             let (tx, rx) = oneshot::channel::<u32>();
             let x = Rc::new(42u32);  // Note: Rc is not Send
             current_thread::spawn(lazy(move || {
-                tx.send(*x);
+                tx.send(*x).unwrap();
                 Ok(())
             }));
             rx.map(|value| assert_eq!(42, value))
