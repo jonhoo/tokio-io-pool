@@ -429,11 +429,19 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         let mut handles = Vec::with_capacity(self.threads.len());
         for (exit, jh) in self.threads.drain(..) {
-            exit.send(self.force_exit).unwrap();
+            if let Err(e) = exit.send(self.force_exit) {
+                if !thread::panicking() {
+                    panic!("oneshot::Sender::Send: {:?}", e);
+                }
+            }
             handles.push(jh);
         }
         for jh in handles {
-            jh.join().unwrap();
+            if let Err(e) = jh.join() {
+                if !thread::panicking() {
+                    panic!("JoinHandle::join: {:?}", e);
+                }
+            }
         }
     }
 }
