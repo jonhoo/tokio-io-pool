@@ -1,6 +1,6 @@
 [package]
 name = "tokio-io-pool"
-version = "0.1.3"
+version = "0.1.4"
 
 description = "Alternative tokio thread pool for I/O-heavy applications"
 readme = "README.md"
