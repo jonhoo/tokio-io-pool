@@ -75,6 +75,9 @@ extern crate num_cpus;
 extern crate tokio;
 extern crate tokio_executor;
 
+#[cfg(test)]
+extern crate tokio_current_thread;
+
 use futures::sync::oneshot;
 use std::sync::{atomic, mpsc, Arc};
 use std::{fmt, io, thread};
@@ -618,13 +621,12 @@ mod tests {
         use futures::future::lazy;
         use futures::sync::oneshot;
         use std::rc::Rc;
-        use tokio::executor::current_thread;
 
         let rt = Runtime::new();
         rt.spawn(lazy(|| {
             let (tx, rx) = oneshot::channel::<u32>();
             let x = Rc::new(42u32);  // Note: Rc is not Send
-            current_thread::spawn(lazy(move || {
+            tokio_current_thread::spawn(lazy(move || {
                 tx.send(*x).unwrap();
                 Ok(())
             }));

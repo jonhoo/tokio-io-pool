@@ -23,3 +23,6 @@ tokio = "0.1"
 futures = "0.1"
 num_cpus = "1.8"
 tokio-executor = "0.1.2"
+
+[dev-dependencies]
+tokio-current-thread = "0.1"
