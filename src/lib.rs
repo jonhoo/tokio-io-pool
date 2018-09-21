@@ -633,4 +633,12 @@ mod tests {
         })).unwrap();
         rt.shutdown_on_idle();
     }
+
+    #[test]
+    fn really_lazy() {
+        super::run(future::lazy(|| {
+            tokio::spawn(future::lazy(|| Ok(())));
+            Ok(())
+        }));
+    }
 }
