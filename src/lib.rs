@@ -605,11 +605,10 @@ mod tests {
         let (tx1, rx1) = oneshot::channel::<u32>();
 
         let rt = Builder::default().pool_size(2).build().unwrap();
-        rt.spawn(future::ok::<(), ()>(tx0.send(42).unwrap())
-        ).unwrap();
-        rt.spawn(rx0.map(|v| tx1.send(v + 1).unwrap())
-                    .map_err(|_| ())
-        ).unwrap();
+        rt.spawn(future::ok::<(), ()>(tx0.send(42).unwrap()))
+            .unwrap();
+        rt.spawn(rx0.map(|v| tx1.send(v + 1).unwrap()).map_err(|_| ()))
+            .unwrap();
         assert_eq!(rx1.wait().unwrap(), 43);
         rt.shutdown_on_idle();
     }
@@ -625,13 +624,12 @@ mod tests {
         let rt = Runtime::new();
         rt.spawn(lazy(|| {
             let (tx, rx) = oneshot::channel::<u32>();
-            let x = Rc::new(42u32);  // Note: Rc is not Send
+            let x = Rc::new(42u32); // Note: Rc is not Send
             tokio_current_thread::spawn(lazy(move || {
                 tx.send(*x).unwrap();
                 Ok(())
             }));
-            rx.map(|value| assert_eq!(42, value))
-              .map_err(|_| ())
+            rx.map(|value| assert_eq!(42, value)).map_err(|_| ())
         })).unwrap();
         rt.shutdown_on_idle();
     }
