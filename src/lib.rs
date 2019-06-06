@@ -204,7 +204,7 @@ impl Builder {
         Ok(Runtime {
             threads,
             force_exit: true,
-            handle: handle,
+            handle,
         })
     }
 }
@@ -330,6 +330,12 @@ impl fmt::Debug for Runtime {
         fmt.debug_struct("Runtime")
             .field("nworkers", &self.threads.len())
             .finish()
+    }
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

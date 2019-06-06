@@ -29,9 +29,6 @@ tracked in [tokio-rs/tokio#486](https://github.com/tokio-rs/tokio/issues/486).
 ## Examples
 
 ```rust
-extern crate tokio_io_pool;
-extern crate tokio;
-
 use tokio::prelude::*;
 use tokio::io::copy;
 use tokio::net::TcpListener;
