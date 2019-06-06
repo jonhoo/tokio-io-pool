@@ -23,9 +23,6 @@
 //! # Examples
 //!
 //! ```no_run
-//! extern crate tokio_io_pool;
-//! extern crate tokio;
-//!
 //! use tokio::prelude::*;
 //! use tokio::io::copy;
 //! use tokio::net::TcpListener;
@@ -69,16 +66,8 @@
 #![deny(missing_copy_implementations)]
 #![deny(unused_extern_crates)]
 
-#[macro_use]
-extern crate futures;
-extern crate num_cpus;
-extern crate tokio;
-extern crate tokio_executor;
-
-#[cfg(test)]
-extern crate tokio_current_thread;
-
 use futures::sync::oneshot;
+use futures::try_ready;
 use std::sync::{atomic, mpsc, Arc};
 use std::{fmt, io, thread};
 use tokio::executor::SpawnError;
@@ -512,7 +501,8 @@ mod tests {
         rt.spawn(lazy(move || {
             tx.send(()).unwrap();
             Ok(())
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(rx.wait().unwrap(), ());
         rt.shutdown_on_idle();
     }
@@ -630,7 +620,8 @@ mod tests {
                 Ok(())
             }));
             rx.map(|value| assert_eq!(42, value)).map_err(|_| ())
-        })).unwrap();
+        }))
+        .unwrap();
         rt.shutdown_on_idle();
     }
 
