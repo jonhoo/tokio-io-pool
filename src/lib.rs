@@ -91,8 +91,8 @@ use tokio::runtime::current_thread;
 pub struct Builder {
     nworkers: usize,
     name_prefix: Option<String>,
-    after_start: Option<Arc<Fn() + Send + Sync>>,
-    before_stop: Option<Arc<Fn() + Send + Sync>>,
+    after_start: Option<Arc<dyn Fn() + Send + Sync>>,
+    before_stop: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl fmt::Debug for Builder {
@@ -281,7 +281,7 @@ impl fmt::Debug for Handle {
 impl tokio::executor::Executor for Handle {
     fn spawn(
         &mut self,
-        future: Box<Future<Item = (), Error = ()> + 'static + Send>,
+        future: Box<dyn Future<Item = (), Error = ()> + 'static + Send>,
     ) -> Result<(), SpawnError> {
         Handle::spawn(self, future).map(|_| ())
     }
