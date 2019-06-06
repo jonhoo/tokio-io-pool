@@ -1,6 +1,6 @@
 [package]
 name = "tokio-io-pool"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2018"
 
 description = "Alternative tokio thread pool for executing short, I/O-heavy futures efficiently"
