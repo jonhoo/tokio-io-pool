@@ -312,7 +312,6 @@ where
 impl Handle {
     /// Spawn a future onto a runtime in the pool.
     ///
-
     /// This spawns the given future onto a single thread runtime's executor. That thread is then
     /// responsible for polling the future until it completes.
     pub fn spawn<F>(&self, future: F) -> Result<&Self, SpawnError>
