@@ -77,7 +77,7 @@ use futures::sync::oneshot;
 use futures::try_ready;
 use std::sync::{atomic, mpsc, Arc};
 use std::{fmt, io, thread};
-use tokio::executor::SpawnError;
+use tokio::executor::{Executor, SpawnError};
 use tokio::prelude::*;
 use tokio::runtime::current_thread;
 
@@ -284,6 +284,28 @@ impl tokio::executor::Executor for Handle {
         future: Box<dyn Future<Item = (), Error = ()> + 'static + Send>,
     ) -> Result<(), SpawnError> {
         Handle::spawn(self, future).map(|_| ())
+    }
+}
+
+impl<F> futures::future::Executor<F> for Handle
+where
+    F: Future<Item = (), Error = ()> + Send + 'static,
+{
+    fn execute(&self, future: F) -> Result<(), futures::future::ExecuteError<F>> {
+        // Handle::spawn(self, future).map_err(|_| futures::future::ExecuteError::Shutdown)
+
+        if let Err(e) = self.status() {
+            let kind = if e.is_at_capacity() {
+                future::ExecuteErrorKind::NoCapacity
+            } else {
+                future::ExecuteErrorKind::Shutdown
+            };
+
+            return Err(future::ExecuteError::new(kind, future));
+        }
+
+        let _ = self.spawn(future);
+        Ok(())
     }
 }
 
