@@ -30,38 +30,28 @@
 //! # Examples
 //!
 //! ```no_run
+//! #![feature(async_await)]
 //! use tokio::prelude::*;
-//! use tokio::io::copy;
+//! use tokio::io::AsyncReadExt;
 //! use tokio::net::TcpListener;
 //!
 //! fn main() {
 //!     // Bind the server's socket.
 //!     let addr = "127.0.0.1:12345".parse().unwrap();
-//!     let listener = TcpListener::bind(&addr)
-//!         .expect("unable to bind TCP listener");
+//!     let mut listener = TcpListener::bind(&addr).expect("unable to bind TCP listener");
 //!
 //!     // Pull out a stream of sockets for incoming connections
-//!     let server = listener.incoming()
-//!         .map_err(|e| eprintln!("accept failed = {:?}", e))
-//!         .for_each(|sock| {
-//!             // Split up the reading and writing parts of the
-//!             // socket.
-//!             let (reader, writer) = sock.split();
-//!
-//!             // A future that echos the data and returns how
-//!             // many bytes were copied...
-//!             let bytes_copied = copy(reader, writer);
-//!
-//!             // ... after which we'll print what happened.
-//!             let handle_conn = bytes_copied.map(|amt| {
-//!                 println!("wrote {:?} bytes", amt)
-//!             }).map_err(|err| {
-//!                 eprintln!("IO error {:?}", err)
+//!     let server = async move {
+//!         loop {
+//!             let (sock, _) = listener.accept().await.expect("acccept failed");
+//!             tokio::spawn(async move {
+//!                 let (mut reader, mut writer) = sock.split();
+//!                 let bytes_copied = reader.copy(&mut writer);
+//!                 let n = bytes_copied.await.expect("I/O error");
+//!                 println!("wrote {} bytes", n);
 //!             });
-//!
-//!             // Spawn the future as a concurrent task.
-//!             tokio::spawn(handle_conn)
-//!         });
+//!         }
+//!     };
 //!
 //!     // Start the Tokio runtime
 //!     tokio_io_pool::run(server);
@@ -72,14 +62,21 @@
 #![deny(missing_debug_implementations)]
 #![deny(missing_copy_implementations)]
 #![deny(unused_extern_crates)]
+#![feature(async_await)]
 
-use futures::sync::oneshot;
-use futures::try_ready;
+use futures_core::{
+    future::{Future},
+    ready,
+    stream::TryStream,
+    task::{Context, Poll},
+};
+use std::pin::Pin;
+use std::marker::Unpin;
 use std::sync::{atomic, mpsc, Arc};
 use std::{fmt, io, thread};
 use tokio::executor::SpawnError;
-use tokio::prelude::*;
 use tokio::runtime::current_thread;
+use tokio::sync::oneshot;
 
 /// Builds an I/O-oriented thread pool ([`Runtime`]) with custom configuration values.
 ///
@@ -226,36 +223,36 @@ impl Builder {
 ///  - Block the current thread until the pool becomes idle.
 ///
 /// Note that the function will not return immediately once future has completed. Instead it waits
-/// for the entire pool to become idle. Note also that the top-level future will be executed with
-/// [`Runtime::block_on`], which calls `Future::wait`, and thus does not provide access to timers,
-/// clocks, or other tokio runtime goodies.
+/// for the entire pool to become idle.
 ///
 /// # Examples
 ///
 /// ```no_run
+/// #![feature(async_await)]
 /// # extern crate tokio_io_pool;
 /// # extern crate tokio;
 /// # extern crate futures;
-/// # use futures::{Future, Stream};
-/// # fn process<T>(_: T) -> Box<Future<Item = (), Error = ()> + Send> {
+/// # use futures_core::{Future, stream::Stream};
+/// # use std::marker::Unpin;
+/// # fn process<T>(_: T) -> Box<dyn Future<Output = ()> + Send + Unpin> {
 /// # unimplemented!();
 /// # }
 /// # let addr = "127.0.0.1:8080".parse().unwrap();
 /// use tokio::net::TcpListener;
 ///
-/// let listener = TcpListener::bind(&addr).unwrap();
-///
-/// let server = listener.incoming()
-///     .map_err(|e| println!("error = {:?}", e))
-///     .for_each(|socket| {
-///         tokio::spawn(process(socket))
-///     });
+/// let mut listener = TcpListener::bind(&addr).unwrap();
+/// let server = async move {
+///     loop {
+///         let (socket, _) = listener.accept().await.expect("acccept failed");
+///         tokio::spawn(process(socket));
+///     }
+/// };
 ///
 /// tokio_io_pool::run(server);
 /// ```
 pub fn run<F>(future: F)
 where
-    F: Future<Item = (), Error = ()> + Send + 'static,
+    F: Future<Output = ()> + Send + 'static,
 {
     let mut rt = Runtime::new();
     let _ = rt.block_on(future);
@@ -281,7 +278,7 @@ impl fmt::Debug for Handle {
 impl tokio::executor::Executor for Handle {
     fn spawn(
         &mut self,
-        future: Box<dyn Future<Item = (), Error = ()> + 'static + Send>,
+        future: Pin<Box<dyn Future<Output = ()> + 'static + Send>>,
     ) -> Result<(), SpawnError> {
         Handle::spawn(self, future).map(|_| ())
     }
@@ -294,7 +291,7 @@ impl Handle {
     /// responsible for polling the future until it completes.
     pub fn spawn<F>(&self, future: F) -> Result<&Self, SpawnError>
     where
-        F: Future<Item = (), Error = ()> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
         let worker = self.rri.fetch_add(1, atomic::Ordering::Relaxed) % self.workers.len();
         self.workers[worker].spawn(future)?;
@@ -308,10 +305,10 @@ impl Handle {
     pub fn spawn_all<S>(
         &self,
         stream: S,
-    ) -> impl Future<Item = (), Error = StreamSpawnError<<S as Stream>::Error>>
+    ) -> impl Future<Output = Result<(), StreamSpawnError<<S as TryStream>::Error>>>
     where
-        S: Stream,
-        <S as Stream>::Item: Future<Item = (), Error = ()> + Send + 'static,
+        S: TryStream,
+        <S as TryStream>::Ok: Future<Output = ()> + Send + 'static,
     {
         Spawner {
             handle: self.clone(),
@@ -371,7 +368,7 @@ impl Runtime {
     /// responsible for polling the future until it completes.
     pub fn spawn<F>(&self, future: F) -> Result<&Self, SpawnError>
     where
-        F: Future<Item = (), Error = ()> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
         self.handle.spawn(future)?;
         Ok(self)
@@ -385,31 +382,37 @@ impl Runtime {
     pub fn spawn_all<S>(
         &self,
         stream: S,
-    ) -> impl Future<Item = (), Error = StreamSpawnError<<S as Stream>::Error>>
+    ) -> impl Future<Output = Result<(), StreamSpawnError<<S as TryStream>::Error>>>
     where
-        S: Stream,
-        <S as Stream>::Item: Future<Item = (), Error = ()> + Send + 'static,
+        S: TryStream,
+        <S as TryStream>::Ok: Future<Output = ()> + Send + 'static,
     {
         self.handle.spawn_all(stream)
     }
 
-    /// Run the given future on the current thread, and dispatch any child futures spawned with
-    /// `tokio::spawn` onto the I/O pool.
+    /// Run the given future on the pool, and dispatch any child futures spawned with
+    /// `tokio::spawn` onto the entire I/O pool.
     ///
     /// Note that child futures of futures that are already running on the pool will be executed on
     /// the same pool thread as their parent. Only the "top-level" calls to `tokio::spawn` are
     /// scheduled to the thread pool as a whole.
     ///
-    /// Note that the top-level future is executed using `Future::wait`, and thus does not provide
-    /// access to timers, clocks, or other tokio runtime goodies.
-    pub fn block_on<F, R, E>(&mut self, future: F) -> Result<R, E>
+    /// The current thread will be blocked until the given future resolves.
+    pub fn block_on<F, O>(&mut self, future: F) -> O
     where
-        F: Send + 'static + Future<Item = R, Error = E>,
-        R: Send + 'static,
-        E: Send + 'static,
+        F: Send + 'static + Future<Output = O>,
+        O: Send + 'static,
     {
+        let (tx, rx) = oneshot::channel();
+        let future = TopLevelSpawn {
+            handle: self.handle.clone(),
+            future,
+        };
+        self.handle.spawn(async move {
+            let _ = tx.send(future.await);
+        }).expect("the runtime is no longer running");
         let mut enter = tokio_executor::enter().expect("already running in executor context");
-        tokio_executor::with_default(&mut self.handle, &mut enter, |_| future.wait())
+        enter.block_on(rx).expect("runtime shut down unexpectedly")
     }
 
     /// Shut down the pool as soon as possible.
@@ -472,6 +475,8 @@ struct Spawner<S> {
     stream: S,
 }
 
+impl<S: Unpin> Unpin for Spawner<S> {}
+
 impl<S> fmt::Debug for Spawner<S>
 where
     S: fmt::Debug,
@@ -485,38 +490,65 @@ where
 
 impl<S> Future for Spawner<S>
 where
-    S: Stream,
-    <S as Stream>::Item: Future<Item = (), Error = ()> + Send + 'static,
+    S: TryStream,
+    <S as TryStream>::Ok: Future<Output = ()> + Send + 'static,
 {
-    type Item = ();
-    type Error = StreamSpawnError<<S as Stream>::Error>;
+    type Output = Result<(), StreamSpawnError<<S as TryStream>::Error>>;
 
-    fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
-        while let Some(fut) = try_ready!(self.stream.poll()) {
-            self.handle.spawn(fut).map_err(StreamSpawnError::Spawn)?;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        // our type is structural, so field projection through Pin is safe:
+        // https://doc.rust-lang.org/std/pin/index.html#projections-and-structural-pinning
+        while let Some(fut) =
+            ready!(unsafe { self.as_mut().map_unchecked_mut(|s| &mut s.stream) }.try_poll_next(cx))
+        {
+            self.handle.spawn(fut?).map_err(StreamSpawnError::Spawn)?;
         }
-        Ok(Async::Ready(()))
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[derive(Debug)]
+struct TopLevelSpawn<F>{
+    handle: Handle,
+    future: F
+}
+
+impl<F: Unpin> Unpin for TopLevelSpawn<F> {}
+
+impl<F> Future for TopLevelSpawn<F> where F: Future {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        // our type is structural, so field projection through Pin is safe:
+        // https://doc.rust-lang.org/std/pin/index.html#projections-and-structural-pinning
+        let (handle, pin) = unsafe {
+            let this = self.get_unchecked_mut();
+            (&mut this.handle, Pin::new_unchecked(&mut this.future))
+        };
+        tokio_executor::with_default(handle, move || pin.poll(cx))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::oneshot;
+    use futures::future;
+    use futures_util::future::FutureExt;
+    use futures_util::stream::StreamExt;
+    use std::io::{Read, Write};
+    use tokio::io::AsyncReadExt;
 
     #[test]
     fn it_works() {
-        use futures::future::lazy;
-        use futures::sync::oneshot;
-
         let (tx, rx) = oneshot::channel();
 
-        let rt = Runtime::new();
-        rt.spawn(lazy(move || {
+        let mut rt = Runtime::new();
+        rt.spawn(async move {
             tx.send(()).unwrap();
-            Ok(())
-        }))
+        })
         .unwrap();
-        assert_eq!(rx.wait().unwrap(), ());
+        assert_eq!(rt.block_on(rx).unwrap(), ());
         rt.shutdown_on_idle();
     }
 
@@ -527,23 +559,23 @@ mod tests {
         let addr = listener.local_addr().unwrap();
 
         let rt = Builder::default().pool_size(1).build().unwrap();
-        let server = listener
-            .incoming()
-            .map_err(|e| unreachable!("{:?}", e))
-            .map(|sock| {
-                let (reader, writer) = sock.split();
-                let bytes_copied = tokio::io::copy(reader, writer);
-                bytes_copied
-                    .map(|_| ())
-                    .map_err(|err| unreachable!("{:?}", err))
-            });
 
         // spawn all connections onto the pool
-        let spawner = rt.spawn_all(server);
+        let spawner = rt.spawn_all(
+            listener
+            .incoming()
+            .then(|r| async { r.unwrap() })
+            .map(|sock| -> Result<_, ()> {
+                Ok(async {
+                    let (mut reader, mut writer) = sock.split();
+                    let bytes_copied = reader.copy(&mut writer);
+                    let _ = bytes_copied.await.unwrap();
+                })
+            }));
 
         // spawn the spawner onto the pool too
         // (a "real" server might wait for it instead)
-        rt.spawn(spawner.map_err(|e| unreachable!("{:?}", e)))
+        rt.spawn(spawner.map(|r| r.unwrap()))
             .unwrap();
 
         let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
@@ -564,24 +596,20 @@ mod tests {
     #[test]
     fn run() {
         let addr = "127.0.0.1:0".parse().unwrap();
-        let listener = tokio::net::TcpListener::bind(&addr).expect("unable to bind TCP listener");
+        let mut listener = tokio::net::TcpListener::bind(&addr).expect("unable to bind TCP listener");
         let addr = listener.local_addr().unwrap();
 
         thread::spawn(move || {
-            let server = listener
-                .incoming()
-                .map_err(|e| unreachable!("{:?}", e))
-                .for_each(|sock| {
-                    let (reader, writer) = sock.split();
-                    let bytes_copied = tokio::io::copy(reader, writer);
-                    tokio::spawn(
-                        bytes_copied
-                            .map(|_| ())
-                            .map_err(|err| unreachable!("{:?}", err)),
-                    )
-                });
-
-            super::run(server);
+            super::run(async move {
+                loop {
+                    let (sock, _) = listener.accept().await.unwrap();
+                    tokio::spawn(async move {
+                        let (mut reader, mut writer) = sock.split();
+                        let bytes_copied = reader.copy(&mut writer);
+                        let _ = bytes_copied.await.unwrap();
+                    });
+                }
+            });
         });
 
         let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
@@ -602,17 +630,20 @@ mod tests {
     // futures channels can exchange information between different threads
     #[test]
     fn interthread_communication() {
-        use futures::sync::oneshot;
-
         let (tx0, rx0) = oneshot::channel::<u32>();
         let (tx1, rx1) = oneshot::channel::<u32>();
 
-        let rt = Builder::default().pool_size(2).build().unwrap();
-        rt.spawn(future::ok::<(), ()>(tx0.send(42).unwrap()))
+        let mut rt = Builder::default().pool_size(2).build().unwrap();
+        rt.spawn(async move {
+            tx0.send(42).unwrap()
+        })
             .unwrap();
-        rt.spawn(rx0.map(|v| tx1.send(v + 1).unwrap()).map_err(|_| ()))
+        rt.spawn(async move {
+            let v = rx0.await.unwrap();
+            tx1.send(v + 1).unwrap();
+        })
             .unwrap();
-        assert_eq!(rx1.wait().unwrap(), 43);
+        assert_eq!(rt.block_on(rx1).unwrap(), 43);
         rt.shutdown_on_idle();
     }
 
@@ -620,29 +651,31 @@ mod tests {
     // thread onto that same thread
     #[test]
     fn spawn_nonsend_futures() {
-        use futures::future::lazy;
-        use futures::sync::oneshot;
         use std::rc::Rc;
 
         let rt = Runtime::new();
-        rt.spawn(lazy(|| {
-            let (tx, rx) = oneshot::channel::<u32>();
-            let x = Rc::new(42u32); // Note: Rc is not Send
-            tokio_current_thread::spawn(lazy(move || {
-                tx.send(*x).unwrap();
-                Ok(())
-            }));
-            rx.map(|value| assert_eq!(42, value)).map_err(|_| ())
-        }))
-        .unwrap();
+        // NOTE: we need to use lazy, not async {} here, becuase async {} wouldn't be Send if we
+        // construct an Rc inside of it.
+        rt.spawn(future::lazy(move |_| {
+                let (tx, rx) = oneshot::channel::<u32>();
+                let x = Rc::new(42u32); // Note: Rc is not Send
+                tokio_current_thread::spawn(async move {
+                    tx.send(*x).unwrap();
+                });
+                rx
+            }).then(|rx| {
+                async move {
+                    let v = rx.await.unwrap();
+                    assert_eq!(42, v);
+                }
+            })).unwrap();
         rt.shutdown_on_idle();
     }
 
     #[test]
     fn really_lazy() {
-        super::run(future::lazy(|| {
-            tokio::spawn(future::lazy(|| Ok(())));
-            Ok(())
-        }));
+        super::run(async {
+            tokio::spawn(async { () });
+        });
     }
 }
