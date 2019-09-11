@@ -30,18 +30,15 @@
 //! # Examples
 //!
 //! ```no_run
-//! #![feature(async_await)]
 //! use tokio::prelude::*;
 //! use tokio::io::AsyncReadExt;
 //! use tokio::net::TcpListener;
 //!
 //! fn main() {
-//!     // Bind the server's socket.
-//!     let addr = "127.0.0.1:12345".parse().unwrap();
-//!     let mut listener = TcpListener::bind(&addr).expect("unable to bind TCP listener");
-//!
-//!     // Pull out a stream of sockets for incoming connections
 //!     let server = async move {
+//!         // Bind the server's socket.
+//!         let mut listener = TcpListener::bind("127.0.0.1:12345").await.expect("unable to bind TCP listener");
+//!         // Pull out a stream of sockets for incoming connections
 //!         loop {
 //!             let (sock, _) = listener.accept().await.expect("acccept failed");
 //!             tokio::spawn(async move {
@@ -62,7 +59,6 @@
 #![deny(missing_debug_implementations)]
 #![deny(missing_copy_implementations)]
 #![deny(unused_extern_crates)]
-#![feature(async_await)]
 
 use futures_core::{
     future::{Future},
@@ -228,7 +224,6 @@ impl Builder {
 /// # Examples
 ///
 /// ```no_run
-/// #![feature(async_await)]
 /// # extern crate tokio_io_pool;
 /// # extern crate tokio;
 /// # extern crate futures;
@@ -237,11 +232,11 @@ impl Builder {
 /// # fn process<T>(_: T) -> Box<dyn Future<Output = ()> + Send + Unpin> {
 /// # unimplemented!();
 /// # }
-/// # let addr = "127.0.0.1:8080".parse().unwrap();
+/// # let addr = "127.0.0.1:8080";
 /// use tokio::net::TcpListener;
 ///
-/// let mut listener = TcpListener::bind(&addr).unwrap();
 /// let server = async move {
+///     let mut listener = TcpListener::bind(addr).await.unwrap();
 ///     loop {
 ///         let (socket, _) = listener.accept().await.expect("acccept failed");
 ///         tokio::spawn(process(socket));
@@ -538,6 +533,7 @@ mod tests {
     use futures_util::stream::StreamExt;
     use std::io::{Read, Write};
     use tokio::io::AsyncReadExt;
+    use std::sync::{Arc, Barrier};
 
     #[test]
     fn it_works() {
@@ -554,11 +550,10 @@ mod tests {
 
     #[test]
     fn spawn_all() {
-        let addr = "127.0.0.1:0".parse().unwrap();
-        let listener = tokio::net::TcpListener::bind(&addr).expect("unable to bind TCP listener");
-        let addr = listener.local_addr().unwrap();
+        let mut rt = Builder::default().pool_size(1).build().unwrap();
 
-        let rt = Builder::default().pool_size(1).build().unwrap();
+        let listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).expect("unable to bind TCP listener");
+        let addr = listener.local_addr().unwrap();
 
         // spawn all connections onto the pool
         let spawner = rt.spawn_all(
@@ -595,12 +590,14 @@ mod tests {
 
     #[test]
     fn run() {
-        let addr = "127.0.0.1:0".parse().unwrap();
-        let mut listener = tokio::net::TcpListener::bind(&addr).expect("unable to bind TCP listener");
-        let addr = listener.local_addr().unwrap();
+        let addr = "127.0.0.1:60032";
+        let barrier = Arc::new(Barrier::new(2));
 
+        let b = barrier.clone();
         thread::spawn(move || {
             super::run(async move {
+                let mut listener = tokio::net::TcpListener::bind(addr).await.expect("unable to bind TCP listener");
+                b.wait();
                 loop {
                     let (sock, _) = listener.accept().await.unwrap();
                     tokio::spawn(async move {
@@ -612,14 +609,16 @@ mod tests {
             });
         });
 
-        let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
+        barrier.wait();
+
+        let mut client = ::std::net::TcpStream::connect(addr).unwrap();
         client.write_all(b"hello world").unwrap();
         client.shutdown(::std::net::Shutdown::Write).unwrap();
         let mut bytes = Vec::new();
         client.read_to_end(&mut bytes).unwrap();
         assert_eq!(&bytes, b"hello world");
 
-        let mut client = ::std::net::TcpStream::connect(&addr).unwrap();
+        let mut client = ::std::net::TcpStream::connect(addr).unwrap();
         client.write_all(b"bye world").unwrap();
         client.shutdown(::std::net::Shutdown::Write).unwrap();
         let mut bytes = Vec::new();
@@ -659,7 +658,7 @@ mod tests {
         rt.spawn(future::lazy(move |_| {
                 let (tx, rx) = oneshot::channel::<u32>();
                 let x = Rc::new(42u32); // Note: Rc is not Send
-                tokio_current_thread::spawn(async move {
+                tokio::runtime::current_thread::spawn(async move {
                     tx.send(*x).unwrap();
                 });
                 rx
