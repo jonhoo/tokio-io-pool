@@ -42,6 +42,7 @@
 //!         loop {
 //!             let (sock, _) = listener.accept().await.expect("acccept failed");
 //!             tokio::spawn(async move {
+//!                 let mut sock = sock;
 //!                 let (mut reader, mut writer) = sock.split();
 //!                 let bytes_copied = reader.copy(&mut writer);
 //!                 let n = bytes_copied.await.expect("I/O error");
@@ -562,6 +563,7 @@ mod tests {
             .then(|r| async { r.unwrap() })
             .map(|sock| -> Result<_, ()> {
                 Ok(async {
+                    let mut sock = sock;
                     let (mut reader, mut writer) = sock.split();
                     let bytes_copied = reader.copy(&mut writer);
                     let _ = bytes_copied.await.unwrap();
@@ -601,6 +603,7 @@ mod tests {
                 loop {
                     let (sock, _) = listener.accept().await.unwrap();
                     tokio::spawn(async move {
+                        let mut sock = sock;
                         let (mut reader, mut writer) = sock.split();
                         let bytes_copied = reader.copy(&mut writer);
                         let _ = bytes_copied.await.unwrap();

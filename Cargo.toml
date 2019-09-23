@@ -1,6 +1,6 @@
 [package]
 name = "tokio-io-pool"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 edition = "2018"
 
 description = "Alternative tokio thread pool for executing short, I/O-heavy futures efficiently"
@@ -22,9 +22,9 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 futures-core-preview = "0.3.0-alpha.18"
-tokio = "0.2.0-alpha.4"
+tokio = "0.2.0-alpha.5"
 num_cpus = "1.8"
-tokio-executor = "0.2.0-alpha.4"
+tokio-executor = "0.2.0-alpha.5"
 
 [dev-dependencies]
 futures-preview = "0.3.0-alpha.18"
