@@ -1,6 +1,6 @@
 [package]
 name = "tokio-io-pool"
-version = "0.2.0-alpha.2"
+version = "0.2.0-alpha.3"
 edition = "2018"
 
 description = "Alternative tokio thread pool for executing short, I/O-heavy futures efficiently"
@@ -21,11 +21,11 @@ travis-ci = { repository = "jonhoo/tokio-io-pool" }
 maintenance = { status = "experimental" }
 
 [dependencies]
-futures-core-preview = "0.3.0-alpha.18"
-tokio = "0.2.0-alpha.5"
+futures-core-preview = "=0.3.0-alpha.19"
+tokio = "=0.2.0-alpha.6"
 num_cpus = "1.8"
-tokio-executor = "0.2.0-alpha.5"
+tokio-executor = "=0.2.0-alpha.6"
 
 [dev-dependencies]
-futures-preview = "0.3.0-alpha.18"
-futures-util-preview = "0.3.0-alpha.18"
+futures-preview = "=0.3.0-alpha.19"
+futures-util-preview = "=0.3.0-alpha.19"
